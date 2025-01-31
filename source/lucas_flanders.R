@@ -96,16 +96,65 @@ md2022_fl <- samp_fl_lf |>
   )
 
 
-md2022_fl |>
+p1 <- md2022_fl |>
+  mutate(
+    provincie = factor(
+      nuts2,
+      levels = paste0("BE", 21:25),
+      labels = c("Antwerpen", "Limburg",
+                 "Oost-Vlaanderen" ,"Vlaams-Brabant", "West-Vlaanderen")
+    )
+  ) |>
   ggplot(
-    aes(x = nuts2, y = n_kle)
+    aes(x = provincie, y = kle_score)
   ) +
   geom_violin(alpha = 0.5) +
   ggforce::geom_sina(alpha = 0.2) +
   stat_summary(
     fun.data = mean_cl_boot,
     colour = "red"
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    y = "Score kleine landschapselementen (KLE)",
+    title = "LUCAS submodule landscape features (2022)",
+    x = "Provincie"
   )
+
+p2 <- md2022_fl |>
+  mutate(
+    provincie = factor(
+      nuts2,
+      levels = paste0("BE", 21:25),
+      labels = c("Antwerpen", "Limburg",
+                 "Oost-Vlaanderen" ,"Vlaams-Brabant", "West-Vlaanderen")
+    ),
+  ) |>
+  group_by(provincie) |>
+  summarise(
+    n_min_10perc = sum(kle_score < 0.1),
+    n = n()
+  ) |>
+  ggplot() +
+  geom_col(
+    aes(y = paste0(provincie, " (n = ", n, ")"),
+        x = n_min_10perc / n),
+    alpha = 0.7) +
+  scale_x_continuous(
+    labels = scales::percent,
+    limits = c(0, 1)
+  ) +
+  labs(
+    x = "Percentage LUCAS meetpunten met KLE score lager dan 10%",
+    y = "Provincie")
+
+fs::dir_create("media")
+ggsave(
+  filename = "media/lucas_lf_klescore_per_provincie.png",
+  plot = p1)  
+ggsave(
+  filename = "media/lucas_lf_n_meetpunten_scorekld10_per_provincie.png",
+  plot = p2)  
 
 
 md2022_fl |>
