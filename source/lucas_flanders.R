@@ -88,6 +88,8 @@ kle_score <- md2022 |>
     kle_score = n() / 41
   )
 
+
+
 md2022_fl <- samp_fl_lf |>
   janitor::clean_names() |>
   inner_join(
@@ -161,4 +163,73 @@ md2022_fl |>
   ggplot() +
   geom_sf(aes(colour = n_kle)) +
   scale_color_gradient2(midpoint = 5)
+
+md2022_fl
+
+
+# extra vragen
+# voor de 5 types landscape features na te gaan wat de % zijn (klokdiagram) per provincie en voor gans Vlaanderen
+# de data (incl coordinaten) te bezorgen
+# a simple typology:
+#    7 LF types
+#    Overlap possible e.g. a tree (primary LF) over a ditch (secondary LF)
+# a two-step approach:
+#    office-based work (photo-interpretation, phase 1)
+#    field survey (phase 2) 
+# values
+
+values <- c(
+  W = "woody vegetation",
+  G = "permanent grass/herbaceous",
+  `T` = "temporary herbaceous",
+  D = "ditches and streams",
+  P = "small ponds and small wetlands",
+#  S = "stone walls, cairns and terraces",
+#  C = "cultural features",
+  `No LF` = "no landscape feature"
+)
+# S and C do not occur in the dataset
+
+
+lf_md_2022 <- md2022 |>
+  janitor::clean_names() |>
+  select(
+    point_id, contains("feature")
+  ) |>
+  select(
+    -survey_feature_width
+  ) |>
+  pivot_longer(
+    cols = contains("feature")
+  ) |>
+  filter(!is.na(value)) |> 
+  separate_wider_delim(
+    cols = name,
+    delim = "_",
+    names = c("obs_type", "dropme", "lf_type", "subpointid")
+  ) |>
+  select(-dropme) |>
+  filter(obs_type == "field")
+
+# enkel Vlaanderen en sf van maken
+lf_md_2022_sf <- samp_fl_lf |>
+  janitor::clean_names() |>
+  inner_join(
+    lf_md_2022,
+    by = join_by(id == point_id)
+  )
+
+lf_md_2022_distinct <- lf_md_2022_sf |>
+  st_drop_geometry() |>
+  distinct(id, subpointid, lf_type, value) |>
+  as_tibble() %>%
+  mutate(
+    value = factor(value, levels = names(values), labels = values)
+  )
+
+
+
+#length(unique(lf_md_2022_sf$id)) * 42 * 2
+
+
 
