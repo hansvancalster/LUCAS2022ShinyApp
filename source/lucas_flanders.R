@@ -24,7 +24,8 @@ glimpse(samp_sf)
 samp_fl <- samp_sf |> 
   filter(NUTS2 %in% paste0("BE", 21:25))
 
-# FI = field, PI = photo interpretation
+# PI = photo interpretation (step 1)
+# FI = field (step 2),
 samp_fl |>
   st_drop_geometry() |>
   count(OBS_TYPE)
@@ -184,8 +185,8 @@ values <- c(
   `T` = "temporary herbaceous",
   D = "ditches and streams",
   P = "small ponds and small wetlands",
-#  S = "stone walls, cairns and terraces",
-#  C = "cultural features",
+  S = "stone walls, cairns and terraces",
+  C = "cultural features",
   `No LF` = "no landscape feature"
 )
 # S and C do not occur in the dataset
@@ -227,9 +228,16 @@ lf_md_2022_distinct <- lf_md_2022_sf |>
     value = factor(value, levels = names(values), labels = values)
   )
 
-
+# what is lf_type??
 
 #length(unique(lf_md_2022_sf$id)) * 42 * 2
+
+lf_md_2022_distinct %>%
+  pivot_wider(names_from = lf_type, values_from = value) %>%
+  filter(`1` != `2`) %>%
+  View()
+
+# note, a LF R package is mentioned in technical report about LF
 
 
 
