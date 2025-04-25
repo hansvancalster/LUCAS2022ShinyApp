@@ -232,12 +232,245 @@ lf_md_2022_distinct <- lf_md_2022_sf |>
 
 #length(unique(lf_md_2022_sf$id)) * 42 * 2
 
-lf_md_2022_distinct %>%
+lf_md_2022_distinct_lf_type_wide <- lf_md_2022_distinct %>%
   pivot_wider(names_from = lf_type, values_from = value) %>%
-  filter(`1` != `2`) %>%
-  View()
+  filter(`1` != `2`)
 
 # note, a LF R package is mentioned in technical report about LF
 
+# technisch rapport: https://op.europa.eu/en/publication-detail/-/publication/4991a3cc-7566-11ef-a8ba-01aa75ed71a1/language-en
 
 
+#Nadenken over volgende vragen
+#- waar liggen LUCAS-meetpunten? Liggen ze binnen de perceelsregistratie of binnen HAG, binnen gele en geelgroene bestemmingen
+
+lf_punten <- lf_md_2022_sf |>
+  distinct(id, nuts2, geometry) |>
+  st_transform(crs = 31370)
+
+#perceelsregistratie (landbouwgebruikspercelen)
+lbg2022 <- read_sf("data/landbouwgebruikspercelen_2022/Landbouwgebruikspercelen_2022_-_Definitief_(extractie_26-06-2023).shp") %>%
+  select(GWSNAM_H)
+
+#HAG
+mercator <- "https://www.mercator.vlaanderen.be/raadpleegdienstenmercatorpubliek/wfs"
+
+#st_layers(paste0("WFS:", mercator))
+
+haglayer <- "\"lu:lu_hag\""
+hag <- read_sf(paste0("WFS:", mercator),
+               query = paste0("SELECT * FROM ", haglayer))
+# st_cast wil niet werken, daarom omweg via qgis
+hag <- hag %>%
+  select(regio) %>%
+  st_transform(crs = 31370) %>%
+  qgisprocess::qgis_run_algorithm_p("native:buffer", DISTANCE = 0) %>%
+  st_as_sf()
+
+
+#gewestplan gele en geelgroene bestemmingen
+
+gwplayer <- "\"lu:lu_gwp_gv\""
+gwp <- read_sf(paste0("WFS:", mercator),
+               query = paste0("SELECT * FROM ", gwplayer))
+gwp <-  gwp %>%
+  select(svnaam) %>%
+  filter(
+    svnaam %in%
+      c(
+        "agrarische gebieden",
+        "landschappelijk waardevolle agrarische gebieden"
+      )
+  ) %>%
+  st_transform(crs = 31370) %>%
+  qgisprocess::qgis_run_algorithm_p("native:buffer", DISTANCE = 0) %>%
+  st_as_sf()
+
+
+
+#intersecties
+not_empty <- function(x) purrr::map_lgl(x, \(x) !rlang::is_empty(x))
+is_in_lbg2022 <- st_intersects(lf_punten, lbg2022, sparse = TRUE) |>
+  not_empty()
+is_in_hag <- st_intersects(lf_punten, hag, sparse = TRUE) |>
+  not_empty()
+is_in_gewestplan_landbouw <- st_intersects(lf_punten, gwp, sparse = TRUE) |>
+  not_empty()
+
+lf_punten <- lf_punten %>%
+  mutate(
+    is_in_lbg2022 = is_in_lbg2022,
+    is_in_hag = is_in_hag,
+    is_in_gewestplan_landbouw = is_in_gewestplan_landbouw
+  )
+
+lf_punten %>%
+  st_drop_geometry() %>%
+  count(is_in_lbg2022, is_in_hag, is_in_gewestplan_landbouw) %>%
+#  write_excel_csv2(here::here("data", "overlap_lf_lbg_hag_gp.csv"))
+  DT::datatable()
+
+
+#- is het aantal meetpunten voldoende om een verandering van 1% op 1 jaar te meten (dit is een tijdsintensieve stap en hiervoor hebben we ook data nodig)
+
+official_stats_lf2022 <- readxl::read_excel(
+  "data/lucas_kle_area_shares_lf2022.xlsx",
+  sheet = "lucas_kle_tidy")
+
+#“share of agricultural land covered with landscape features”.
+#a procedure for computing this proportion based on observations from LUCAS core and from the LUCAS Landscape Feature module.
+
+nuts_samplesizes <- lf_punten %>%
+  st_drop_geometry() %>%
+  count(nuts2, name = "samplesize")
+
+
+# deff calculation is probably wrong
+# sd_binom should not be used as SRS case
+# mean is share of agricultural area that is LF and is calculated as
+# ratio of estimator for the area of LF divided by area of AL (agric land)
+# moreover mean and sd are already based on SRS case, so deff should be 1
+official_stats_lf2022 <- official_stats_lf2022 %>%
+  inner_join(nuts_samplesizes, by = join_by(nuts2)) %>%
+  mutate(
+    mean = mean / 100,
+    sd = sd / 100, # = standard error of the mean?
+    var = (sd * sqrt(samplesize)) ^ 2, # variance 
+    sd_binom = sqrt(mean * (1 - mean)),
+    deff = var / sd_binom^2
+  )
+
+# minimum detectable effect 1% per jaar - ongeveer 6% na 6 jaar (1.01^6)
+p1 <- mean(
+  official_stats_lf2022$mean[official_stats_lf2022$kle_type == "alle"]
+)
+#The design effect of an estimator is defined as the ratio between the variance of the estimator under the actual sampling design and the variance that would be obtained for an 'equivalent' estimator under a hypothetical simple random sampling without replacement of the same size. 
+deff <- mean(
+  official_stats_lf2022$deff[official_stats_lf2022$kle_type == "alle"]
+)
+mde <- 0.06 # abs(P2 - P1)
+power <- 0.80
+tails <- "one-tailed"
+rr <- 1
+hhsize <- 1 # 
+alpha <- 0.05
+beta <- 0.2
+
+test1 <- ReGenesees::n.comp2prop(
+  P1 = p1,
+  MDE = mde,
+  K1 = 1/2,
+  alpha = 0.05,
+  beta = 0.2,
+  sides = tails,
+  pooled.variance = TRUE,
+  DEFF = deff,
+  RR = rr,
+  F = 1,
+  hhSize = hhsize,
+  old.clus.size = NULL, new.clus.size = NULL,
+  verbose = TRUE
+)
+test1
+test2 <- ReGenesees::n.comp2prop(
+  P1 = p1,
+  P2 = p1 * 1.01^6,
+  K1 = 1/2,
+  alpha = 0.05,
+  beta = 0.2,
+  sides = tails,
+  pooled.variance = TRUE,
+  DEFF = deff,
+  RR = rr,
+  F = 1,
+  hhSize = hhsize,
+  old.clus.size = NULL, new.clus.size = NULL,
+  verbose = TRUE
+)
+
+
+
+?ReGenesees::deff()
+
+official_stats_lf2022_nreq <- official_stats_lf2022 %>%
+  crossing(
+    cyclus = c(1, 3, 6, 12, 24),
+    perc_per_jaar = 0.01
+  ) %>%
+  rowwise() %>%
+  mutate(
+    n_comp2prop_abs1perc = list(
+      ReGenesees::n.comp2prop(
+        P1 = mean,
+        MDE = 0.01 * cyclus, 
+        K1 = 1/2,
+        alpha = 0.05,
+        beta = 0.2,
+        sides = "two-tailed",
+        pooled.variance = TRUE,
+        DEFF = deff,
+        RR = 1,
+        F = 1,
+        hhSize = 1,
+        old.clus.size = NULL, new.clus.size = NULL,
+        verbose = FALSE
+      )
+    ),
+    n_comp2prop_rel1perc = list(
+      ReGenesees::n.comp2prop(
+        P1 = mean,
+        P2 = mean * 1.01^cyclus, 
+        K1 = 1/2,
+        alpha = 0.05,
+        beta = 0.2,
+        sides = "two-tailed",
+        pooled.variance = TRUE,
+        DEFF = deff,
+        RR = 1,
+        F = 1,
+        hhSize = 1,
+        old.clus.size = NULL, new.clus.size = NULL,
+        verbose = FALSE
+      )
+    )
+  )
+
+official_stats_lf2022_nreq <- official_stats_lf2022_nreq %>%
+  pivot_longer(
+    cols = starts_with("n_comp"),
+    names_to = "change",
+    names_prefix = "n_comp2prop_",
+    values_to = "reqn"
+  ) %>%
+  unnest_wider(reqn)
+
+official_stats_lf2022_nreq %>%
+  ggplot() +
+  geom_point(
+    aes(
+      x = factor(cyclus),
+      y = n1,
+      colour = kle_type
+    ),
+    position = position_dodge(width = 0.5)
+  ) +
+  facet_grid(
+    rows = vars(nuts2),
+    cols = vars(change)
+  ) +
+  geom_hline(aes(yintercept = samplesize)) +
+  geom_text(
+    aes(x = 3, y = samplesize, label = samplesize),
+    alpha = 0.2, nudge_y = 1
+  ) +
+  scale_y_continuous(
+    trans = "log",
+    breaks = c(10, 100, 1000, 10000)
+  ) +
+  labs(
+    y = "Vereist aantal LUCAS locaties",
+    x = "Aantal jaren dat trend zich doorzet"
+  )
+
+
+#- kan de BWK-methodiek instaan voor de kwaliteitsinschatting van de KLE's
