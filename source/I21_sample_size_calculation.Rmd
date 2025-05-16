@@ -1,0 +1,756 @@
+---
+title: "LUCAS submodule Landscape Features (LF)."
+author: "Hans Van Calster"
+date: "`r Sys.Date()`"
+output:
+  bookdown::html_document2
+editor_options: 
+  markdown: 
+    wrap: sentence
+bibliography: references.yaml
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(stringr)
+library(readxl)
+library(viridis)
+library(patchwork)
+library(sf)
+library(dplyr)
+library(ggrepel)
+library(tidyr)
+library(LF)
+
+
+library(knitr)
+opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  out.width = "100%"
+  )
+```
+
+```{r data}
+data(lfall)
+data(lucasCore)
+data(LFmaster)
+data(lfdat_I) # With Weights used for I21
+lfdat = lfdat_I
+rm(lfdat_I)
+```
+
+```{r calc_i21}
+# filter BE
+lfdatb <- lfdat %>% filter(NUTS0_16 == "BE")
+lucasCoreb <- lucasCore %>% filter(NUTS0_16 == "BE")
+lfallb <- lfall %>% filter(POINT_NUTS0 == "BE")
+apxi <- rawLFshare(lfdatb) %>% suppressMessages()
+
+# Compute the I.21 indicator, with and without attributing non agricultural 
+# central points to an agricultural class
+I21 <- calcI21(lfdatb, lucasCore, apxi, lfall = lfallb, naattrib = TRUE)
+I21F <- calcI21(lfdatb, lucasCoreb, apxi, lfall = lfallb,  naattrib = FALSE)
+
+# compute the I.21 indicator for Flanders
+lfdatfl <- lfdatb %>%
+  filter(NUTS2_16 %in% paste0("BE", 21:25)) %>%
+  mutate(
+    POLY = "Vlaanderen"
+  )
+lfallfl <- lfallb %>%
+  semi_join(lfdatfl, by = "POINT_ID")
+lucasCorefl <- lucasCore %>%
+  filter(
+    grepl("^BE2", x = NUTS2_16)
+  ) %>%
+  mutate(
+    POLY = "Vlaanderen"
+  )
+  
+
+wfs_vrbg <- "https://geo.api.vlaanderen.be/VRBG/wfs"
+#st_layers(paste0("WFS:", wfs_vrbg))
+flanders_polygon <- read_sf(
+  paste0("WFS:", wfs_vrbg),
+  layer = "VRBG:Refgew"
+)
+
+provincies_polygon <- read_sf(
+  paste0("WFS:", wfs_vrbg),
+  layer = "VRBG:RefPrv"
+)
+
+
+flanders_polygon <- flanders_polygon %>%
+  mutate(POLY = "Vlaanderen",
+         NUTS2016_0 = "BE") %>%
+  st_transform(crs = 3035)
+  
+
+#debugonce(calcI21)
+I21_flanders <- calcI21(
+  lfdatfl,
+  lucasCorefl,
+  lfall = lfallfl,
+  naattrib = TRUE,
+  agrreg = "POLY",
+  reg = "POLY",
+  poly = flanders_polygon
+) %>%
+  filter(MS != "EU") %>%
+  mutate(MS = "Vlaanderen")
+  
+
+# Compute the I.21 indicator for NUTS2 regions
+apxLFnuts2 <- rawLFshare(lfdatb, reg = "nuts2") %>% suppressMessages()
+I21_nuts2 <- calcI21(
+  lfdatb, lucasCoreb, apxLFnuts2, lfall = lfallb,
+  reg = "nuts2", naattrib = TRUE
+)
+
+
+#?LF::calcI21
+i21_nuts2_tidy <- I21_nuts2 %>%
+  janitor::clean_names() %>%
+  mutate(
+    nuts2 = factor(
+      nuts2,
+      levels = paste0("BE", c(21:25, 31:35)),
+      labels = c(
+        "Antwerpen", "Limburg",
+        "Oost-Vlaanderen" ,"Vlaams-Brabant", "West-Vlaanderen",
+        "Waals-Brabant",
+        "Henegouwen",
+        "Luik",
+        "Luxemburg",
+        "Namen"
+      )
+    ),
+    al = factor(
+      al,
+      levels = c("AR", "PC", "PG", "NA", "TT", "TTT"),
+      labels = c("Akkerland (AR)", "Permanente teelten (PC)", "Permanent Grasland (PG)",
+                 "Geen landbouw (NA)", "AR+PG+PC", "AR+PG+PC+NA")
+    ),
+    lf = factor(
+      lf,
+      levels = c("A", "E", "G", "S", "T", "W"),
+      labels = c("Alle (A)", "Natte (W)", "Grazige (G)", "Stenige (S)",
+                 "Tijdelijke (T)", "Houtige (W)")
+    )
+  )
+
+i21_fl_tidy <- I21_flanders %>%
+  janitor::clean_names() %>%
+  mutate(
+    al = factor(
+      al,
+      levels = c("AR", "PC", "PG", "NA", "TT", "TTT"),
+      labels = c("Akkerland (AR)", "Permanente teelten (PC)", "Permanent Grasland (PG)",
+                 "Geen landbouw (NA)", "AR+PG+PC", "AR+PG+PC+NA")
+    ),
+    lf = factor(
+      lf,
+      levels = c("A", "E", "G", "S", "T", "W"),
+      labels = c("Alle (A)", "Natte (W)", "Grazige (G)", "Stenige (S)",
+                 "Tijdelijke (T)", "Houtige (W)")
+    )
+  )
+
+i21_be_tidy <- I21 %>%
+  janitor::clean_names() %>%
+  mutate(
+    al = factor(
+      al,
+      levels = c("AR", "PC", "PG", "NA", "TT", "TTT"),
+      labels = c("Akkerland (AR)", "Permanente teelten (PC)", "Permanent Grasland (PG)",
+                 "Geen landbouw (NA)", "AR+PG+PC", "AR+PG+PC+NA")
+    ),
+    lf = factor(
+      lf,
+      levels = c("A", "E", "G", "S", "T", "W"),
+      labels = c("Alle (A)", "Natte (W)", "Grazige (G)", "Stenige (S)",
+                 "Tijdelijke (T)", "Houtige (W)")
+    )
+  )
+
+# filter / select and combine datasets
+
+i21_tidy <- i21_nuts2_tidy %>%
+  filter(
+    nuts2 %in% c(
+      "Antwerpen", "Limburg",
+      "Oost-Vlaanderen" ,"Vlaams-Brabant", "West-Vlaanderen"
+    ),
+    al == "AR+PG+PC+NA"
+  ) %>%
+  select(
+    ms, nuts2, al, lf,
+    starts_with("lftot"),
+    starts_with("tcount"),
+    starts_with("alcount"),
+    aarea,
+    starts_with("i21")
+  ) %>%
+  bind_rows(
+    i21_fl_tidy %>%
+      filter(
+        al == "AR+PG+PC+NA"
+      ) %>%
+      select(
+        ms, al, lf,
+        starts_with("lftot"),
+        starts_with("tcount"),
+        starts_with("alcount"),
+        aarea,
+        starts_with("i21")
+      ),
+    i21_be_tidy %>%
+      filter(
+        al == "AR+PG+PC+NA",
+        ms == "BE"
+      ) %>%
+      select(
+        ms, al, lf,
+        starts_with("lftot"),
+        starts_with("tcount"),
+        starts_with("alcount"),
+        aarea,
+        starts_with("i21")
+      )
+  ) %>%
+  mutate(
+    nuts = ifelse(is.na(nuts2), ms, as.character(nuts2)),
+    nuts = ifelse(nuts == "BE", "België", nuts)
+  ) %>%
+  select(-ms, -nuts2) %>%
+  relocate(nuts) %>%
+  mutate(
+    nuts_schaal = case_when(
+      nuts == "Vlaanderen" ~ "Gewest",
+      nuts == "België" ~ "Land",
+      TRUE ~ "Provincie") %>%
+      factor(levels = c("Land", "Gewest", "Provincie"))
+  )
+```
+
+## Berekening indicator I21
+
+I21 = oppervlakte-aandeel (uitgedrukt als percentage) van kleine landschapselementen in het landbouwareaal.
+
+Zowel voor de teller als de noemer zijn er verschillende opties in de berekening.
+De teller kan de oppervlakte van een specifieke KLE zijn of de gezamenlijke oppervlakte van alle KLEs.
+De noemer bepaalt de definitie van wat tot het landbouwareaal behoort.
+Voor deze laatste volgen we de aanbeveling van [@dandrimont2024] om de meest ruime definitie te nemen.
+
+```{r}
+i21_tidy %>%
+  ggplot() +
+  geom_pointrange(
+    aes(
+      y = i21,
+      ymin = i21 - 1.96 * i21_se,
+      ymax = i21 + 1.96 * i21_se,
+      x = nuts,
+      colour = lf
+    ),
+    position = position_dodge(width = 0.5)
+  ) +
+  facet_grid(~nuts_schaal, scales = "free_x", space = "free_x") +
+  labs(
+    y = "Indicator I21: oppervlaktepercentage KLE",
+    x = ""
+  )
+
+i21_tidy %>%
+  ggplot() +
+  geom_pointrange(
+    aes(
+      y = lftot,
+      ymin = lftot - 1.96 * lftot_se,
+      ymax = lftot + 1.96 * lftot_se,
+      x = nuts,
+      colour = lf
+    ),
+    position = position_dodge(width = 0.5)
+  ) +
+  facet_grid(~ nuts_schaal, scales = "free_x", space = "free_x") +
+  labs(
+    y = "Oppervlakte KLE (in km2)",
+    x = ""
+  )
+
+
+i21_tidy %>%
+  ggplot() +
+  geom_pointrange(
+    aes(
+      y = aarea,
+      ymin = aarea - 1.96 * alcount_se,
+      ymax = aarea + 1.96 * alcount_se,
+      x = nuts 
+    ),
+    position = position_dodge(width = 0.5)
+  ) +
+  facet_grid(~ nuts_schaal, scales = "free_x", space = "free_x") +
+  lims(y = c(0, NA)) +
+  labs(
+    y = "Oppervlakte landbouw (in km2)",
+    x = ""
+  )
+
+
+```
+
+De onzekerheid op de schatting van de oppervlakte landbouw is een onderschatting.
+Hierdoor wordt ook de onzekerheid op I21 onderschat.
+Dit is teruggekoppeld met de auteur van het R package `LF`.
+Er is echter nog geen gecorrigeerde schatter geïmplementeerd.
+We doen een poging om dit zelf te corrigeren en hermaken de figuren.
+Het effect op de onzekerheid van de I21 indicator is echter klein.
+
+```{r}
+nuts_areas <- provincies_polygon %>%
+  mutate(
+    area_km2 = st_area(SHAPE) %>% units::set_units("km2") %>% as.numeric()
+  ) %>%
+  st_drop_geometry() %>%
+  select(
+    nuts = NAAM,
+    NUTS2,
+    area_km2
+  )
+
+nuts_areas <- bind_rows(
+  nuts_areas,
+  nuts_areas %>%
+    summarise(area_km2 = sum(area_km2)) %>%
+    mutate(
+      nuts = "Vlaanderen",
+      NUTS2 = "BE2"
+    ),
+  data.frame(
+    nuts = "België",
+    NUTS2 = "BE",
+    area_km2 = 30688
+  )
+)
+
+nuts_n_gridpunten <- lucasCorefl %>%
+  select(NUTS2) %>%
+  count(NUTS2, name = "n_gridpunten")
+
+nuts_n_gridpunten <- bind_rows(
+  nuts_n_gridpunten,
+  nuts_n_gridpunten %>%
+    summarise(n_gridpunten = sum(n_gridpunten)) %>%
+    mutate(
+      NUTS2 = "BE2"
+    ),
+  data.frame(
+    NUTS2 = "BE",
+    n_gridpunten = nrow(lucasCoreb)
+  )
+)
+
+nuts_n_lfpunten <- lucasCorefl %>%
+  filter(LF_FLAG == 1) %>%
+  select(NUTS2) %>%
+  count(NUTS2, name = "n_lfpunten")
+
+nuts_n_lfpunten <- bind_rows(
+  nuts_n_lfpunten,
+  nuts_n_lfpunten %>%
+    summarise(n_lfpunten = sum(n_lfpunten)) %>%
+    mutate(
+      NUTS2 = "BE2"
+    ),
+  data.frame(
+    NUTS2 = "BE",
+    n_lfpunten = nrow(lfdatb)
+  )
+)
+
+nuts_n_area <- nuts_areas %>%
+  inner_join(nuts_n_gridpunten) %>%
+  inner_join(nuts_n_lfpunten)
+
+# assuming tcount_cv is good approximation for alcount_cv
+i21_tidy_correctie <- i21_tidy %>%
+  inner_join(nuts_n_area) %>%
+  mutate(
+    alcount_cv = tcount_cv,
+    alcount_se = tcount_cv * alcount,
+    i21_cv = sqrt(lftot_cv^2 + alcount_cv^2),
+    i21_se = i21 * i21_cv
+  )
+
+```
+
+
+
+```{r}
+i21_tidy_correctie %>%
+  ggplot() +
+  geom_pointrange(
+    aes(
+      y = i21,
+      ymin = i21 - 1.96 * i21_se,
+      ymax = i21 + 1.96 * i21_se,
+      x = nuts,
+      colour = lf
+    ),
+    position = position_dodge(width = 0.5)
+  ) +
+  facet_grid(~nuts_schaal, scales = "free_x", space = "free_x") +
+  labs(
+    y = "Indicator I21: oppervlaktepercentage KLE",
+    x = ""
+  )
+
+i21_tidy_correctie %>%
+  ggplot() +
+  geom_pointrange(
+    aes(
+      y = lftot,
+      ymin = lftot - 1.96 * lftot_se,
+      ymax = lftot + 1.96 * lftot_se,
+      x = nuts,
+      colour = lf
+    ),
+    position = position_dodge(width = 0.5)
+  ) +
+  facet_grid(~ nuts_schaal, scales = "free_x", space = "free_x") +
+  labs(
+    y = "Oppervlakte KLE (in km2)",
+    x = ""
+  )
+
+
+i21_tidy_correctie %>%
+  ggplot() +
+  geom_pointrange(
+    aes(
+      y = aarea,
+      ymin = aarea - 1.96 * alcount_se,
+      ymax = aarea + 1.96 * alcount_se,
+      x = nuts 
+    ),
+    position = position_dodge(width = 0.5)
+  ) +
+  facet_grid(~ nuts_schaal, scales = "free_x", space = "free_x") +
+  lims(y = c(0, NA)) +
+  labs(
+    y = "Oppervlakte landbouw (in km2)",
+    x = ""
+  )
+
+
+i21_tidy %>%
+  mutate(
+    groep = "officiële cijfers"
+  ) %>%
+  bind_rows(
+    i21_tidy_correctie %>%
+      mutate(
+        groep = "gecorrigeerd"
+      )
+  ) %>%
+  ggplot() +
+  geom_pointrange(
+    aes(
+      y = i21,
+      ymin = i21 - 1.96 * i21_se,
+      ymax = i21 + 1.96 * i21_se,
+      x = nuts,
+      colour = lf,
+      shape = groep
+    ),
+    position = position_dodge(width = 0.5)
+  ) +
+  facet_grid(~nuts_schaal, scales = "free_x", space = "free_x") +
+  labs(
+    y = "Indicator I21: oppervlaktepercentage KLE",
+    x = ""
+  )
+```
+
+## Berekening vereiste steekproefgrootte
+
+We maken gebruik van formules voor verschillen tussen twee proporties bij design-based inferentie.
+Hiervoor hebben we een inschatting nodig van de verhouding van de variantie tussen het LUCAS design en de variantie die we zouden bekomen voor een enkelvoudige aselecte steekproef zonder teruglegging (dit is het design effect).
+Momenteel is het nog onduidelijk hoe we deze kunnen berekenen en de resultaten van deze berekeningen zijn dan ook onder voorbehoud.
+
+We mogen verwachten dat het LUCAS design beter is dan een enkelvoudige aselecte steekproef zonder teruglegging, omdat het gaat om een gestratificeerde steekproef waarbij bovendien de locaties ruimtelijk goed gespreid werden.
+
+We berekenen daarom twee extremen: een versie waar we het design effect gelijk stellen aan 1 (worst case) en een versie waarbij we het design effect berekenen door te vergelijken met de variantie van een binomiale verdeling.
+
+```{r}
+cycli <- c(6, 10, 12)
+snelheid <- c(0.06 / 25, 0.03 / 6, 0.06 / 6) 
+
+i21_tidy_correctie_nreq <- i21_tidy_correctie %>%
+  mutate(
+    i21 = i21 / 100,
+    i21_se = i21_se / 100,
+    i21_var = (i21_se * sqrt(n_lfpunten)) ^ 2,
+    binom_var = i21 * (1 - i21),
+    i21_deff = i21_var / binom_var,
+    wcs_deff = 1
+  ) %>%
+  crossing(
+    cyclus = cycli,
+    perc_per_jaar = snelheid 
+  ) %>%
+  tidyr::pivot_longer(
+    cols = contains("deff"),
+    names_to = "deff_scenario", values_to = "deff_values"
+    ) %>%
+  rowwise() %>%
+  mutate(
+    n_comp2prop_abs1perc = list(
+      ReGenesees::n.comp2prop(
+        P1 = i21,
+        MDE = perc_per_jaar * cyclus, 
+        K1 = 1/2,
+        alpha = 0.05,
+        beta = 0.2,
+        sides = "two-tailed",
+        pooled.variance = TRUE,
+        DEFF = deff_values,
+        RR = 1,
+        F = 1,
+        hhSize = 1,
+        old.clus.size = NULL, new.clus.size = NULL,
+        verbose = FALSE
+      )
+    )
+  ) %>%
+  pivot_longer(
+    cols = starts_with("n_comp"),
+    names_to = "change",
+    names_prefix = "n_comp2prop_",
+    values_to = "reqn"
+  ) %>%
+  unnest_wider(reqn)
+```
+
+Fig \@ref(fig:design-effect-binomiaal)
+
+(ref:design-effect-binomiaal) Vereiste steekproefgroote voor een verschil tussen twee proporties (alpha = 0.05, beta = 0.2, power = 0.8). De steekproefgrootte werd naar beneden bijgesteld ten opzichte van een enkelvoudige aselecte steekproef zonder teruglegging op basis van een design effect in geval van "i21_deff" (of niet in geval van "wcs_deff").
+
+```{r design-effect-binomiaal, fig.cap= "(ref:design-effect-binomiaal)", fig.height = 260/25.4}
+i21_tidy_correctie_nreq %>%
+  filter(
+    !is.na(i21_se),
+  ) %>%
+  # flag cases where normality assumption likely not holds
+  mutate(
+    normality_assumption_holds = (n1 * pmin(i21, 1 - i21) > 10) &
+      (n2 * pmin(
+        i21 + cyclus * perc_per_jaar,
+        1 - i21 - cyclus * perc_per_jaar
+        )
+      ),
+    mde = cyclus * perc_per_jaar
+  ) %>%
+  ggplot() +
+  geom_hline(aes(yintercept = n_lfpunten), alpha = 0.5) +
+  geom_text(
+    aes(x = 3, y = n_lfpunten, label = n_lfpunten),
+    alpha = 0.1, nudge_x = 0.5
+  ) +
+  geom_point(
+    aes(
+      x = factor(round(mde * 100, 2)),
+      y = n1, # = n2
+      colour = lf,
+      shape = normality_assumption_holds
+    )
+  ) +
+  geom_line(
+    aes(
+      x = factor(round(mde * 100, 2)),
+      y = n1, # = n2
+      colour = lf,
+      group = lf
+    ),
+    alpha = 0.3
+  ) +
+  facet_grid(
+    rows = vars(nuts_schaal, nuts),
+    cols = vars(deff_scenario)
+  ) +
+  scale_y_continuous(
+    trans = "log",
+    breaks = c(1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
+  ) +
+  scale_shape_manual(
+    values = c(`TRUE` = 19, `FALSE` = 1)
+  ) +
+  scale_x_discrete(expand = expansion(add = c(1, 1))) +
+  labs(
+    y = "Vereist aantal LUCAS LF locaties",
+    x = "Minimaal detecteerbaar effect (absoluut verschil in percentage)",
+    shape = "Voldaan aan assumptie\nnormaliteit"
+  ) +
+  theme(legend.position = "top") +
+  guides(
+    colour = guide_legend(nrow = 2, byrow = TRUE),
+    shape = guide_legend(nrow = 2, byrow = TRUE)
+  )
+```
+
+Fig \@ref(fig:wcs-lf-alle)
+
+(ref:wcs-lf-alle) Vereiste steekproefgroote voor een verschil tussen twee proporties (alpha = 0.05, beta = 0.2, power = 0.8) voor het scenario waar we uitgaan van een design effect gelijk aan 1 (= enkelvoudige aselecte steekproef zonder teruglegging). Deze figuur toont enkel de resultaten voor het Vlaams gewest en alle KLEs samengenomen.
+
+```{r wcs-lf-alle, fig.cap="(ref:wcs-lf-alle)"}
+i21_tidy_correctie_nreq %>%
+  filter(
+    !is.na(i21_se),
+     nuts %in% "Vlaanderen",
+    lf == "Alle (A)",
+    deff_scenario == "wcs_deff"
+  ) %>%
+  # flag cases where normality assumption likely not holds
+  mutate(
+    normality_assumption_holds = (n1 * pmin(i21, 1 - i21) > 10) &
+      (n2 * pmin(
+        i21 + cyclus * perc_per_jaar,
+        1 - i21 - cyclus * perc_per_jaar
+        )
+      ),
+    mde = cyclus * perc_per_jaar
+  ) %>%
+  ggplot() +
+  geom_hline(aes(yintercept = n_lfpunten), alpha = 0.5) +
+  geom_text(
+    aes(x = 3, y = n_lfpunten, label = n_lfpunten),
+    alpha = 0.1, nudge_x = 0.5
+  ) +
+  geom_point(
+    aes(
+      x = factor(round(mde * 100, 2)),
+      y = n1,
+      shape = normality_assumption_holds
+    )
+  ) +
+  ggrepel::geom_text_repel(
+    aes(
+      x = factor(round(mde * 100, 2)),
+      y = n1,
+      label = paste0("cyclus: ", cyclus, "\nprop per jaar: ", perc_per_jaar)
+    ),
+    min.segment.length = 0,
+    nudge_x = 3,
+    alpha = 0.3
+  ) +
+  scale_shape_manual(
+    values = c(`TRUE` = 19, `FALSE` = 1)
+  ) +
+  scale_y_continuous(
+    trans = "log",
+    breaks = c(1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
+  ) +
+  scale_x_discrete(expand = expansion(add = c(1, 1))) +
+  labs(
+    y = "Vereist aantal LUCAS LF locaties",
+    x = "Minimaal detecteerbaar effect (absoluut verschil in percentage)",
+    shape = "Voldaan aan assumptie\nnormaliteit"
+  ) +
+  labs(title = "Vlaanderen")
+```
+
+Fig \@ref(fig:wcs-lf-alle-be)
+
+(ref:wcs-lf-alle-be) Vereiste steekproefgroote voor een verschil tussen twee proporties (alpha = 0.05, beta = 0.2, power = 0.8) voor het scenario waar we uitgaan van een design effect gelijk aan 1 (= enkelvoudige aselecte steekproef zonder teruglegging). Deze figuur toont enkel de resultaten voor België en alle KLEs samengenomen.
+
+
+```{r wcs-lf-alle-be, fig.cap="(ref:wcs-lf-alle-be)"}
+i21_tidy_correctie_nreq %>%
+  filter(
+    !is.na(i21_se),
+     nuts %in% "België",
+    lf == "Alle (A)",
+    deff_scenario == "wcs_deff"
+  ) %>%
+  # flag cases where normality assumption likely not holds
+  mutate(
+    normality_assumption_holds = (n1 * pmin(i21, 1 - i21) > 10) &
+      (n2 * pmin(
+        i21 + cyclus * perc_per_jaar,
+        1 - i21 - cyclus * perc_per_jaar
+        )
+      ),
+    mde = cyclus * perc_per_jaar
+  ) %>%
+  ggplot() +
+  geom_hline(aes(yintercept = n_lfpunten), alpha = 0.5) +
+  geom_text(
+    aes(x = 3, y = n_lfpunten, label = n_lfpunten),
+    alpha = 0.1, nudge_x = 0.5
+  ) +
+  geom_point(
+    aes(
+      x = factor(round(mde * 100, 2)),
+      y = n1,
+      shape = normality_assumption_holds
+    )
+  ) +
+  ggrepel::geom_text_repel(
+    aes(
+      x = factor(round(mde * 100, 2)),
+      y = n1,
+      label = paste0("cyclus: ", cyclus, "\nprop per jaar: ", perc_per_jaar)
+    ),
+    min.segment.length = 0,
+    nudge_x = 3,
+    alpha = 0.3
+  ) +
+  scale_shape_manual(
+    values = c(`TRUE` = 19, `FALSE` = 1)
+  ) +
+  scale_y_continuous(
+    trans = "log",
+    breaks = c(1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
+  ) +
+  scale_x_discrete(expand = expansion(add = c(1, 1))) +
+  labs(
+    y = "Vereist aantal LUCAS LF locaties",
+    x = "Minimaal detecteerbaar effect (absoluut verschil in percentage)",
+    shape = "Voldaan aan assumptie\nnormaliteit"
+  ) +
+  labs(title = "België")
+```
+
+```{r}
+i21_tidy_correctie_nreq %>%
+  filter(
+    nuts %in% c("Vlaanderen", "België"),
+    lf == "Alle (A)",
+    deff_scenario == "wcs_deff"
+  ) %>%
+  mutate(
+    verschil = cyclus * perc_per_jaar,
+    cyclus = paste0(cyclus, " jaar"),
+    p1_i21 = round(i21, 3),
+    p2_i21 = round(i21 + verschil, 3),
+    prop_per_jaar = perc_per_jaar
+  ) %>%
+  select(
+    nuts, lf, deff_scenario, cyclus, 
+    p1_i21,
+    p2_i21,
+    verschil,
+    prop_per_jaar,
+    n1, n2) %>%
+  kable()
+
+```
+
+
+
+## Referenties
