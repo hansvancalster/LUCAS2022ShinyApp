@@ -2,3 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+*.html
+data/landbouwgebruikspercelen_2022
+*.xlsx
+*.png
